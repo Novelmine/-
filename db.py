@@ -1,13 +1,41 @@
 import os
+import socket
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import psycopg
 from psycopg.rows import dict_row
+
+
+def _inject_ipv4_hostaddr(database_url: str) -> str:
+    """
+    Force IPv4 for environments where IPv6 egress is unavailable.
+    Adds hostaddr=<ipv4> to conninfo if hostname resolves.
+    """
+    parsed = urlparse(database_url)
+    if not parsed.hostname:
+        return database_url
+
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if "hostaddr" in query:
+        return database_url
+
+    try:
+        ipv4 = socket.getaddrinfo(parsed.hostname, None, socket.AF_INET)[0][4][0]
+    except Exception:
+        return database_url
+
+    query["hostaddr"] = ipv4
+    new_query = urlencode(query)
+    return urlunparse(parsed._replace(query=new_query))
+
 
 def get_conn():
     database_url = os.environ.get("DATABASE_URL", "")
     if not database_url:
         raise RuntimeError("DATABASE_URL 환경변수가 필요합니다. (Supabase Postgres 연결 문자열)")
-    return psycopg.connect(database_url, row_factory=dict_row)
+
+    conninfo = _inject_ipv4_hostaddr(database_url)
+    return psycopg.connect(conninfo, row_factory=dict_row)
 
 
 def init_db():

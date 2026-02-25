@@ -63,3 +63,9 @@ python -m unittest -v
 ### Render에서 Docker 모드로 만든 경우
 - 이미 Docker 기반 Web Service로 생성했다면, 저장소 루트의 `Dockerfile`을 사용해 그대로 배포할 수 있습니다.
 - 또는 기존 서비스를 삭제하고 `Blueprint(render.yaml)` 방식으로 다시 생성해도 됩니다.
+
+
+## Render 부팅 에러(IPv6 Network is unreachable) 대응
+- Supabase 연결은 가능하면 **Connection Pooler(포트 6543)** 문자열을 사용하세요.
+- 이 프로젝트는 DB 연결 시 호스트를 IPv4로 해석해 `hostaddr`를 자동 주입하도록 처리했습니다(IPv6 미지원 환경 대응).
+- 부팅 시 DB가 잠시 불가해도 앱 프로세스가 즉시 죽지 않도록 `wsgi.py`에서 스키마 초기화는 best-effort로 동작합니다.
