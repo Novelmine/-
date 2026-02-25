@@ -59,3 +59,7 @@ python -m unittest -v
 > 주의: Render 무료 플랜은 디스크가 영속적이지 않으므로 `uploads/` 원본 파일은 영구 보관되지 않습니다. OCR 결과/점수는 Postgres에 저장됩니다.
 
 - 현재 대상 Supabase 프로젝트 URL(`https://hewavzpynhozjtwwgfxg.supabase.co`) 기준으로 연결 예시를 반영했습니다.
+
+### Render에서 Docker 모드로 만든 경우
+- 이미 Docker 기반 Web Service로 생성했다면, 저장소 루트의 `Dockerfile`을 사용해 그대로 배포할 수 있습니다.
+- 또는 기존 서비스를 삭제하고 `Blueprint(render.yaml)` 방식으로 다시 생성해도 됩니다.
