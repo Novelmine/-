@@ -2,9 +2,14 @@
 {% block content %}
 <section class="card">
   <h2>주간 다중 이미지 업로드</h2>
-  <p>예시: 주차 키는 <strong>2026-W08</strong> 형식으로 입력하고, 이미지 10장까지 한 번에 올리세요.</p>
+  <p>
+    기준 날짜를 입력하면 <strong>한국시간 기준 전주 목요일</strong>을 주차키로 자동 계산합니다.
+    (예: 2026-02-25 입력 → 주차키 2026-02-19)
+  </p>
   <form method="post" enctype="multipart/form-data" class="grid-form">
-    <label>주차 키 <input name="week_key" required></label>
+    <label>기준 날짜 (선택, 기본값: 오늘 KST)
+      <input type="date" name="input_date">
+    </label>
     <label>이미지 파일들 (복수 선택 가능)
       <input type="file" name="images" accept="image/*" multiple required>
     </label>

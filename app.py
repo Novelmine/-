@@ -6,6 +6,7 @@ from flask import Flask, flash, redirect, render_template, request, url_for
 from db import init_db
 from guild_api import GuildAPIError, fetch_guild_members
 from storage import Storage, StorageError
+from utils_dates import compute_previous_week_thursday_key
 from ocr_utils import (
     best_member_match,
     compute_file_hash,
@@ -81,11 +82,9 @@ def upload():
     if request.method == "GET":
         return render_template("upload.html")
 
-    week_key = request.form.get("week_key", "").strip()
+    input_date = request.form.get("input_date", "").strip() or None
+    week_key = compute_previous_week_thursday_key(input_date)
     files = request.files.getlist("images")
-    if not week_key:
-        flash("주차 키(예: 2026-W08)를 입력하세요.", "error")
-        return redirect(url_for("upload"))
 
     files = [f for f in files if f and f.filename]
     if not files:
@@ -137,7 +136,7 @@ def upload():
         flash(str(exc), "error")
         return redirect(url_for("upload"))
 
-    flash(f"배치 처리 완료: {len(files)}장 업로드", "success")
+    flash(f"배치 처리 완료: {len(files)}장 업로드 (주차키: {week_key})", "success")
     return redirect(url_for("batch_result", batch_id=batch_id))
 
 

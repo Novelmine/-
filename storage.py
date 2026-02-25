@@ -54,24 +54,56 @@ class Storage:
             conn.commit()
 
     def import_members(self, names):
+        incoming = sorted({n.strip() for n in names if n and n.strip()})
+
         if self.use_rest:
-            rows = [{"nickname": n, "rank": "길드원", "nickname_aliases": ""} for n in names]
-            inserted = self._rest_insert(
-                "members",
-                rows,
-                on_conflict="nickname",
-                ignore_duplicates=True,
-            )
-            return len(inserted)
+            existing = self._rest_select("members", select="id,nickname,is_active")
+            existing_names = {m["nickname"] for m in existing}
+            inserted_count = len([n for n in incoming if n not in existing_names])
+
+            # Upsert incoming members and keep them active.
+            rows = [{"nickname": n, "rank": "길드원", "nickname_aliases": "", "is_active": True} for n in incoming]
+            if rows:
+                self._rest_insert(
+                    "members",
+                    rows,
+                    on_conflict="nickname",
+                    ignore_duplicates=False,
+                    merge_duplicates=True,
+                )
+
+            # Members missing from latest guild API list are kept but deactivated.
+            to_deactivate = [m["id"] for m in existing if m["nickname"] not in set(incoming)]
+            for member_id in to_deactivate:
+                self._rest_patch("members", {"is_active": False}, {"id": f"eq.{member_id}"})
+
+            return inserted_count
 
         inserted = 0
         with get_conn() as conn:
-            for name in names:
+            existing = conn.execute("SELECT nickname FROM members").fetchall()
+            existing_names = {r["nickname"] for r in existing}
+
+            for name in incoming:
                 cur = conn.execute(
-                    "INSERT INTO members (nickname, rank, nickname_aliases) VALUES (%s, '길드원', '') ON CONFLICT (nickname) DO NOTHING",
+                    """
+                    INSERT INTO members (nickname, rank, nickname_aliases, is_active)
+                    VALUES (%s, '길드원', '', TRUE)
+                    ON CONFLICT (nickname) DO UPDATE SET is_active = TRUE
+                    """,
                     (name,),
                 )
-                inserted += 1 if cur.rowcount else 0
+                if name not in existing_names:
+                    inserted += 1
+
+            if incoming:
+                conn.execute(
+                    "UPDATE members SET is_active = FALSE WHERE nickname <> ALL(%s)",
+                    (incoming,),
+                )
+            else:
+                conn.execute("UPDATE members SET is_active = FALSE")
+
             conn.commit()
         return inserted
 
@@ -244,13 +276,15 @@ class Storage:
             query["limit"] = str(limit)
         return self._rest_request("GET", table, query=query)
 
-    def _rest_insert(self, table, rows, on_conflict=None, ignore_duplicates=False):
+    def _rest_insert(self, table, rows, on_conflict=None, ignore_duplicates=False, merge_duplicates=False):
         query = {}
         if on_conflict:
             query["on_conflict"] = on_conflict
         prefer = "return=representation"
         if ignore_duplicates:
             prefer = "resolution=ignore-duplicates," + prefer
+        if merge_duplicates:
+            prefer = "resolution=merge-duplicates," + prefer
         return self._rest_request("POST", table, query=query, body=rows, headers={"Prefer": prefer})
 
     def _rest_patch(self, table, values, filters):
