@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <h2>배치 #{{ batch.id }} 결과</h2>
+  <p>주차: {{ batch.week_key }} / 업로드: {{ batch.uploaded_count }}장 / 상태: {{ batch.status }}</p>
+</section>
+
+<section class="card">
+  <h3>업로드된 이미지</h3>
+  <ul>
+    {% for img in images %}
+      <li>{{ img.file_path }} (hash: {{ img.image_hash[:12] }})</li>
+    {% else %}
+      <li>이미지가 없습니다.</li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="card">
+  <h3>주간 확정/추천 점수</h3>
+  <table>
+    <thead><tr><th>닉네임</th><th>점수</th><th>검수상태</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.nickname }}</td>
+        <td>{{ r.score }}</td>
+        <td>{% if r.confirmed %}자동 확정{% else %}검수 필요{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3">추출 결과가 없습니다.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
