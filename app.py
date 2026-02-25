@@ -3,8 +3,9 @@ from pathlib import Path
 
 from flask import Flask, flash, redirect, render_template, request, url_for
 
-from db import get_conn, init_db
+from db import init_db
 from guild_api import GuildAPIError, fetch_guild_members
+from storage import Storage, StorageError
 from ocr_utils import (
     best_member_match,
     compute_file_hash,
@@ -19,34 +20,30 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 app = Flask(__name__)
 app.secret_key = "maple-dev-secret"
+store = Storage()
 
 
 @app.route("/")
 def index():
-    with get_conn() as conn:
-        batches = conn.execute(
-            "SELECT id, week_key, uploaded_count, status, created_at FROM weekly_batches ORDER BY id DESC LIMIT 20"
-        ).fetchall()
+    batches = store.list_recent_batches(limit=20)
     return render_template("index.html", batches=batches)
 
 
 @app.route("/members", methods=["GET", "POST"])
 def members():
-    with get_conn() as conn:
-        if request.method == "POST":
-            nickname = request.form.get("nickname", "").strip()
-            rank = request.form.get("rank", "길드원").strip() or "길드원"
-            aliases = request.form.get("nickname_aliases", "").strip()
-            if nickname:
-                conn.execute(
-                    "INSERT INTO members (nickname, rank, nickname_aliases) VALUES (%s, %s, %s) ON CONFLICT (nickname) DO NOTHING",
-                    (nickname, rank, aliases),
-                )
-                conn.commit()
+    if request.method == "POST":
+        nickname = request.form.get("nickname", "").strip()
+        rank = request.form.get("rank", "길드원").strip() or "길드원"
+        aliases = request.form.get("nickname_aliases", "").strip()
+        if nickname:
+            try:
+                store.add_member(nickname, rank, aliases)
                 flash(f"길드원 '{nickname}' 추가 완료", "success")
-            return redirect(url_for("members"))
+            except StorageError as exc:
+                flash(str(exc), "error")
+        return redirect(url_for("members"))
 
-        rows = conn.execute("SELECT * FROM members ORDER BY nickname").fetchall()
+    rows = store.list_members()
     return render_template("members.html", members=rows)
 
 
@@ -69,15 +66,11 @@ def import_guild_members():
         flash(str(exc), "error")
         return redirect(url_for("members"))
 
-    inserted = 0
-    with get_conn() as conn:
-        for name in member_names:
-            cur = conn.execute(
-                "INSERT INTO members (nickname, rank, nickname_aliases) VALUES (%s, '길드원', '') ON CONFLICT (nickname) DO NOTHING",
-                (name,),
-            )
-            inserted += 1 if cur.rowcount else 0
-        conn.commit()
+    try:
+        inserted = store.import_members(member_names)
+    except StorageError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("members"))
 
     flash(f"길드원 동기화 완료: 전체 {len(member_names)}명 / 신규 {inserted}명", "success")
     return redirect(url_for("members"))
@@ -99,13 +92,9 @@ def upload():
         flash("이미지를 최소 1장 이상 업로드하세요.", "error")
         return redirect(url_for("upload"))
 
-    with get_conn() as conn:
-        members = [dict(r) for r in conn.execute("SELECT * FROM members WHERE is_active = TRUE").fetchall()]
-        batch_cursor = conn.execute(
-            "INSERT INTO weekly_batches (week_key, uploaded_count, status) VALUES (%s, %s, 'processing') RETURNING id",
-            (week_key, len(files)),
-        )
-        batch_id = batch_cursor.fetchone()["id"]
+    try:
+        members = [dict(r) if not isinstance(r, dict) else r for r in store.list_active_members()]
+        batch_id = store.create_batch(week_key, len(files))
 
         extracted_records = []
 
@@ -114,11 +103,7 @@ def upload():
             file.save(target)
 
             image_hash = compute_file_hash(str(target))
-            img_cursor = conn.execute(
-                "INSERT INTO images (batch_id, file_path, image_hash) VALUES (%s, %s, %s) RETURNING id",
-                (batch_id, str(target), image_hash),
-            )
-            image_id = img_cursor.fetchone()["id"]
+            image_id = store.create_image(batch_id, str(target), image_hash)
 
             try:
                 pre = preprocess_image(str(target))
@@ -132,10 +117,7 @@ def upload():
             for item in parsed:
                 member, similarity = best_member_match(item["name"], members)
                 member_id = member["id"] if member else None
-                conn.execute(
-                    "INSERT INTO ocr_lines (image_id, raw_name, raw_score, confidence) VALUES (%s, %s, %s, %s)",
-                    (image_id, item["name"], item["score"], avg_conf),
-                )
+                store.add_ocr_line(image_id, item["name"], item["score"], avg_conf)
                 if member_id:
                     extracted_records.append(
                         {
@@ -148,13 +130,12 @@ def upload():
 
         merged = merge_consensus(extracted_records)
         for row in merged:
-            conn.execute(
-                "INSERT INTO weekly_records (week_key, member_id, score, source_image_id, confirmed) VALUES (%s, %s, %s, %s, %s)",
-                (week_key, row["member_id"], row["score"], row["source_image_id"], row["confirmed"]),
-            )
+            store.add_weekly_record(week_key, row["member_id"], row["score"], row["source_image_id"], row["confirmed"])
 
-        conn.execute("UPDATE weekly_batches SET status='done' WHERE id=%s", (batch_id,))
-        conn.commit()
+        store.mark_batch_done(batch_id)
+    except StorageError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("upload"))
 
     flash(f"배치 처리 완료: {len(files)}장 업로드", "success")
     return redirect(url_for("batch_result", batch_id=batch_id))
@@ -162,19 +143,13 @@ def upload():
 
 @app.route("/batch/<int:batch_id>")
 def batch_result(batch_id: int):
-    with get_conn() as conn:
-        batch = conn.execute("SELECT * FROM weekly_batches WHERE id=%s", (batch_id,)).fetchone()
-        images = conn.execute("SELECT * FROM images WHERE batch_id=%s", (batch_id,)).fetchall()
-        rows = conn.execute(
-            """
-            SELECT wr.week_key, wr.score, wr.confirmed, m.nickname
-            FROM weekly_records wr
-            JOIN members m ON m.id = wr.member_id
-            WHERE wr.week_key = %s
-            ORDER BY wr.score DESC
-            """,
-            (batch["week_key"],),
-        ).fetchall()
+    try:
+        batch = store.get_batch(batch_id)
+        images = store.get_images(batch_id)
+        rows = store.get_weekly_rows(batch["week_key"]) if batch else []
+    except StorageError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("index"))
     return render_template("batch.html", batch=batch, images=images, rows=rows)
 
 

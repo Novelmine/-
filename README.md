@@ -20,8 +20,11 @@
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-# Supabase -> Project Settings -> Database -> Connection string
-export DATABASE_URL="postgresql://postgres:YOUR_DB_PASSWORD@db.hewavzpynhozjtwwgfxg.supabase.co:6543/postgres?sslmode=require"
+# 권장: Supabase REST 모드 (DB 포트 직결 없이 HTTPS 사용)
+export SUPABASE_URL="https://hewavzpynhozjtwwgfxg.supabase.co"
+export SUPABASE_SERVICE_ROLE_KEY="YOUR_SERVICE_ROLE_KEY"
+# 선택: 직접 DB 접속이 필요하면 DATABASE_URL도 설정
+# export DATABASE_URL="postgresql://postgres:YOUR_DB_PASSWORD@db.hewavzpynhozjtwwgfxg.supabase.co:6543/postgres?sslmode=require"
 python app.py
 ```
 
@@ -42,19 +45,18 @@ python -m unittest -v
 - API 직접 확인 시 308 Redirect가 나오면 URL 끝 슬래시(`/`)가 필요한 경우입니다. `curl -L`을 사용하거나 `/guild/id/`, `/guild/basic/` 경로를 사용하세요.
 
 
-## DB 설정 (Supabase/Postgres)
-- `DATABASE_URL` 환경변수가 반드시 필요합니다.
-- `.env.example`에 Supabase 연결 문자열 템플릿을 추가해두었습니다.
-- 앱 시작 시 `init_db()`가 Postgres에 테이블을 자동 생성합니다.
-- 기존 SQLite 파일(`maple_guild.db`)은 더 이상 사용하지 않습니다.
-
+## DB 설정 / Supabase 연결
+- **권장(무료/안정)**: `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`를 사용한 REST 모드 (HTTPS 443)
+- **선택(직접 DB 접속)**: `DATABASE_URL` (Postgres TCP)
+- 앱은 `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`가 있으면 REST 모드를 우선 사용합니다.
+- `.env.example`에 두 방식 템플릿이 모두 있습니다.
 
 ## 서버 배포 (Render, 바로 시작)
 1. GitHub에 현재 저장소를 푸시합니다.
 2. Render 대시보드에서 **New + > Blueprint**를 선택하고 이 저장소를 연결합니다.
 3. `render.yaml`을 읽어 웹 서비스를 생성합니다.
-4. Render 서비스의 Environment에서 `DATABASE_URL`(Supabase 연결 문자열)을 설정합니다.
-5. Deploy를 실행하면 `gunicorn wsgi:application`으로 서버가 기동되고, 시작 시 `init_db()`가 테이블을 자동 생성합니다.
+4. Render 서비스의 Environment에서 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`를 먼저 설정합니다. (`DATABASE_URL`은 선택)
+5. Deploy를 실행하면 `gunicorn wsgi:application`으로 서버가 기동됩니다.
 
 > 주의: Render 무료 플랜은 디스크가 영속적이지 않으므로 `uploads/` 원본 파일은 영구 보관되지 않습니다. OCR 결과/점수는 Postgres에 저장됩니다.
 
@@ -66,6 +68,7 @@ python -m unittest -v
 
 
 ## Render 부팅 에러(IPv6 Network is unreachable) 대응
+- REST 모드(`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`)를 쓰면 이 이슈를 대부분 회피할 수 있습니다.
 - Supabase 연결은 가능하면 **Connection Pooler(포트 6543)** 문자열을 사용하세요.
 - `DATABASE_URL`에 호스트를 대괄호(`[]`)로 감싸면 URL 파서 오류가 날 수 있습니다. (예: `@[db....]`)
 - 이 프로젝트는 DB 연결 시 호스트를 IPv4로 해석해 `hostaddr`를 자동 주입하도록 처리했습니다(IPv6 미지원 환경 대응).
