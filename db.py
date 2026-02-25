@@ -3,13 +3,11 @@ import os
 import psycopg
 from psycopg.rows import dict_row
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-
-
 def get_conn():
-    if not DATABASE_URL:
+    database_url = os.environ.get("DATABASE_URL", "")
+    if not database_url:
         raise RuntimeError("DATABASE_URL 환경변수가 필요합니다. (Supabase Postgres 연결 문자열)")
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    return psycopg.connect(database_url, row_factory=dict_row)
 
 
 def init_db():

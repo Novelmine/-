@@ -46,3 +46,13 @@ python -m unittest -v
 - `DATABASE_URL` 환경변수가 반드시 필요합니다.
 - 앱 시작 시 `init_db()`가 Postgres에 테이블을 자동 생성합니다.
 - 기존 SQLite 파일(`maple_guild.db`)은 더 이상 사용하지 않습니다.
+
+
+## 서버 배포 (Render, 바로 시작)
+1. GitHub에 현재 저장소를 푸시합니다.
+2. Render 대시보드에서 **New + > Blueprint**를 선택하고 이 저장소를 연결합니다.
+3. `render.yaml`을 읽어 웹 서비스를 생성합니다.
+4. Render 서비스의 Environment에서 `DATABASE_URL`(Supabase 연결 문자열)을 설정합니다.
+5. Deploy를 실행하면 `gunicorn wsgi:application`으로 서버가 기동되고, 시작 시 `init_db()`가 테이블을 자동 생성합니다.
+
+> 주의: Render 무료 플랜은 디스크가 영속적이지 않으므로 `uploads/` 원본 파일은 영구 보관되지 않습니다. OCR 결과/점수는 Postgres에 저장됩니다.
