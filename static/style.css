@@ -1,0 +1,14 @@
+body { font-family: Arial, sans-serif; margin: 0; background: #f6f7fb; color: #222; }
+header { background: #1f2a44; color: white; padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; }
+nav a { color: #d7e3ff; margin-right: 12px; text-decoration: none; }
+main { padding: 18px; max-width: 1000px; margin: 0 auto; }
+.card { background: white; border-radius: 10px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.grid-form { display: grid; gap: 12px; }
+label { display: grid; gap: 4px; font-size: 14px; }
+input, button { padding: 8px; font-size: 14px; }
+button { width: fit-content; background: #304ffe; color: white; border: 0; border-radius: 6px; cursor: pointer; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border-bottom: 1px solid #ececec; padding: 8px; text-align: left; }
+.flash-list { list-style: none; margin: 10px auto; max-width: 1000px; padding: 0 18px; }
+.flash-success { background: #e9fbe9; border: 1px solid #9ed89e; padding: 8px; border-radius: 6px; }
+.flash-error { background: #ffecec; border: 1px solid #e3a7a7; padding: 8px; border-radius: 6px; }
