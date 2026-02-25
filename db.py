@@ -1,9 +1,19 @@
 import os
+import re
 import socket
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-import psycopg
-from psycopg.rows import dict_row
+BRACKETED_HOST_RE = re.compile(r"@\[([A-Za-z0-9.-]+)\](?::|$)")
+
+
+def _normalize_database_url(database_url: str) -> str:
+    """
+    Normalize common copy/paste mistakes in DATABASE_URL.
+    - trim surrounding quotes/spaces
+    - convert bracketed hostname (e.g. @[db.example.com]:5432) to @db.example.com:5432
+    """
+    cleaned = database_url.strip().strip('"').strip("'")
+    return BRACKETED_HOST_RE.sub(lambda m: f"@{m.group(1)}" + (":" if m.group(0).endswith(":") else ""), cleaned)
 
 
 def _inject_ipv4_hostaddr(database_url: str) -> str:
@@ -11,7 +21,10 @@ def _inject_ipv4_hostaddr(database_url: str) -> str:
     Force IPv4 for environments where IPv6 egress is unavailable.
     Adds hostaddr=<ipv4> to conninfo if hostname resolves.
     """
-    parsed = urlparse(database_url)
+    try:
+        parsed = urlparse(database_url)
+    except Exception:
+        return database_url
     if not parsed.hostname:
         return database_url
 
@@ -34,7 +47,11 @@ def get_conn():
     if not database_url:
         raise RuntimeError("DATABASE_URL 환경변수가 필요합니다. (Supabase Postgres 연결 문자열)")
 
-    conninfo = _inject_ipv4_hostaddr(database_url)
+    normalized = _normalize_database_url(database_url)
+    conninfo = _inject_ipv4_hostaddr(normalized)
+    import psycopg
+    from psycopg.rows import dict_row
+
     return psycopg.connect(conninfo, row_factory=dict_row)
 
 

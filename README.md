@@ -67,5 +67,7 @@ python -m unittest -v
 
 ## Render 부팅 에러(IPv6 Network is unreachable) 대응
 - Supabase 연결은 가능하면 **Connection Pooler(포트 6543)** 문자열을 사용하세요.
+- `DATABASE_URL`에 호스트를 대괄호(`[]`)로 감싸면 URL 파서 오류가 날 수 있습니다. (예: `@[db....]`)
 - 이 프로젝트는 DB 연결 시 호스트를 IPv4로 해석해 `hostaddr`를 자동 주입하도록 처리했습니다(IPv6 미지원 환경 대응).
 - 부팅 시 DB가 잠시 불가해도 앱 프로세스가 즉시 죽지 않도록 `wsgi.py`에서 스키마 초기화는 best-effort로 동작합니다.
+- 참고: 앱에서 흔한 대괄호 오입력(`@[host]`)은 자동 정규화하도록 보완했습니다.
