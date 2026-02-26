@@ -1,57 +1,34 @@
 import hashlib
-import importlib
-import importlib.util
 import re
 from collections import defaultdict
 from statistics import median
 from difflib import SequenceMatcher
 
-NAME_SCORE_RE = re.compile(r"([가-힣A-Za-z0-9._]{2,16})\s+([0-9,]{1,7})")
+try:
+    import cv2
+    import numpy as np
+    import pytesseract
+    from PIL import Image
+except ModuleNotFoundError:
+    cv2 = None
+    np = None
+    pytesseract = None
+    Image = None
 
-CONFUSION_MAP = str.maketrans(
-    {
-        "0": "o",
-        "1": "l",
-        "|": "l",
-        "5": "s",
-        "$": "s",
-    }
-)
-
-
-def _optional_module(name: str):
-    if importlib.util.find_spec(name) is None:
-        return None
-    return importlib.import_module(name)
+NAME_SCORE_RE = re.compile(r"([가-힣A-Za-z0-9]{2,12})\s+([0-9]{1,5})")
 
 
-cv2 = _optional_module("cv2")
-np = _optional_module("numpy")
-pytesseract = _optional_module("pytesseract")
-Image = None
-if importlib.util.find_spec("PIL") is not None:
-    Image = importlib.import_module("PIL.Image")
-
-paddleocr_mod = _optional_module("paddleocr")
-easyocr_mod = _optional_module("easyocr")
-
-_PADDLE_ENGINE = None
-_EASY_ENGINE = None
-
-
-MAPLE_TABLE_COLS = {
-    "nickname": (40, 132),
-    "job": (132, 222),
-    "level": (222, 260),
-    "rank": (260, 315),
-    "mission": (315, 350),
-    "sewer": (350, 438),
-    "flag": (438, 510),
-}
+CONFUSION_MAP = str.maketrans({
+    "0": "o",
+    "1": "l",
+    "|": "l",
+    "5": "s",
+    "$": "s",
+})
 
 
 def normalize_nickname(name: str) -> str:
-    compact = "".join(ch for ch in name.strip().lower() if ch.isalnum() or ("가" <= ch <= "힣"))
+    compact = "".join(ch for ch in name.strip().lower() if ch.isalnum() or ('가' <= ch <= '힣'))
     return compact.translate(CONFUSION_MAP)
 
 
@@ -63,14 +40,10 @@ def compute_file_hash(path: str) -> str:
     return hasher.hexdigest()
 
 
-def _load_image_rgb(path: str):
+def preprocess_image(path: str):
     if cv2 is None or Image is None or np is None:
         raise RuntimeError("OCR dependencies are not installed. Install requirements.txt first.")
-    return np.array(Image.open(path).convert("RGB"))
-
-
-def preprocess_image(path: str):
-    image = _load_image_rgb(path)
+    image = np.array(Image.open(path).convert("RGB"))
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray)
@@ -88,35 +61,14 @@ def preprocess_image(path: str):
     return sharpened
 
 
-def _get_paddle_engine():
-    global _PADDLE_ENGINE
-    if paddleocr_mod is None:
-        return None
-    if _PADDLE_ENGINE is None:
-        _PADDLE_ENGINE = paddleocr_mod.PaddleOCR(use_angle_cls=True, lang="korean", show_log=False)
-    return _PADDLE_ENGINE
-
-
-def _get_easy_engine():
-    global _EASY_ENGINE
-    if easyocr_mod is None:
-        return None
-    if _EASY_ENGINE is None:
-        _EASY_ENGINE = easyocr_mod.Reader(["ko", "en"], gpu=False)
-    return _EASY_ENGINE
-
-
-def _ocr_with_pytesseract(image, numeric: bool = False):
+def run_ocr(preprocessed):
     if pytesseract is None:
-        return None, 0.0
-    config = "--psm 7"
-    if numeric:
-        config += " -c tessedit_char_whitelist=0123456789,"
+        raise RuntimeError("pytesseract is not installed. Install requirements.txt first.")
     data = pytesseract.image_to_data(
-        image,
+        preprocessed,
         lang="kor+eng",
         output_type=pytesseract.Output.DICT,
-        config=config,
+        config="--psm 6",
     )
     words = []
     for i, word in enumerate(data["text"]):
@@ -124,130 +76,22 @@ def _ocr_with_pytesseract(image, numeric: bool = False):
         if not cleaned:
             continue
         conf_raw = data["conf"][i]
-        conf = float(conf_raw) if str(conf_raw).replace(".", "", 1).isdigit() else 0.0
-        words.append((cleaned, conf))
-    if not words:
-        return "", 0.0
-    text = " ".join(w for w, _ in words)
-    avg_conf = sum(c for _, c in words) / len(words)
-    return text, avg_conf
+        try:
+            conf = float(conf_raw)
+        except ValueError:
+            conf = 0.0
+        words.append({"text": cleaned, "conf": conf})
 
-
-def _ocr_with_paddle(image):
-    engine = _get_paddle_engine()
-    if engine is None:
-        return None, 0.0
-    result = engine.ocr(image, cls=True)
-    lines = []
-    scores = []
-    for block in result:
-        if not block:
-            continue
-        for item in block:
-            text = item[1][0].strip()
-            score = float(item[1][1]) * 100
-            if text:
-                lines.append(text)
-                scores.append(score)
-    if not lines:
-        return "", 0.0
-    return " ".join(lines), sum(scores) / len(scores)
-
-
-def _ocr_with_easyocr(image):
-    engine = _get_easy_engine()
-    if engine is None:
-        return None, 0.0
-    result = engine.readtext(image)
-    texts = [r[1].strip() for r in result if r[1].strip()]
-    scores = [float(r[2]) * 100 for r in result if r[1].strip()]
-    if not texts:
-        return "", 0.0
-    return " ".join(texts), sum(scores) / len(scores)
-
-
-def ocr_text(image, engine: str = "auto", numeric: bool = False):
-    if engine in ("auto", "paddle"):
-        txt, conf = _ocr_with_paddle(image)
-        if txt is not None:
-            return txt, conf
-    if engine in ("auto", "easyocr"):
-        txt, conf = _ocr_with_easyocr(image)
-        if txt is not None:
-            return txt, conf
-    txt, conf = _ocr_with_pytesseract(image, numeric=numeric)
-    if txt is None:
-        raise RuntimeError("No OCR engine available. Install pytesseract or paddleocr/easyocr.")
-    return txt, conf
-
-
-def parse_int(value: str) -> int:
-    cleaned = re.sub(r"[^0-9]", "", value)
-    return int(cleaned) if cleaned else 0
-
-
-def extract_maple_table_rows(
-    path: str,
-    row_count: int = 17,
-    engine: str = "auto",
-    table_top_ratio: float = 0.16,
-    table_bottom_ratio: float = 0.78,
-):
-    image = _load_image_rgb(path)
-    h, w, _ = image.shape
-
-    table_top = int(h * table_top_ratio)
-    table_bottom = int(h * table_bottom_ratio)
-    row_height = max(1, int((table_bottom - table_top) / row_count))
-    rows = []
-
-    for idx in range(row_count):
-        y1 = table_top + idx * row_height
-        y2 = y1 + row_height
-        if y2 > h:
-            break
-
-        row_data = {}
-        total_conf = 0.0
-        hit = 0
-
-        for key, (x1_base, x2_base) in MAPLE_TABLE_COLS.items():
-            x1 = int(x1_base / 540 * w)
-            x2 = int(x2_base / 540 * w)
-            cell = image[y1:y2, x1:x2]
-            if cell.size == 0:
-                row_data[key] = ""
-                continue
-
-            gray = cv2.cvtColor(cell, cv2.COLOR_RGB2GRAY)
-            gray = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-            _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-            txt, conf = ocr_text(bw, engine=engine, numeric=key in {"level", "mission", "sewer", "flag"})
-            row_data[key] = txt.replace(" ", "")
-            if txt:
-                total_conf += conf
-                hit += 1
-
-        if row_data.get("nickname"):
-            row_data["confidence"] = round(total_conf / max(1, hit), 2)
-            row_data["score"] = parse_int(row_data.get("sewer", "0"))
-            row_data["mission"] = parse_int(row_data.get("mission", "0"))
-            row_data["flag"] = parse_int(row_data.get("flag", "0"))
-            rows.append(row_data)
-
-    return rows
-
-
-def run_ocr(preprocessed):
-    return ocr_text(preprocessed, engine="auto")
+    joined = " ".join(w["text"] for w in words)
+    avg_conf = sum(w["conf"] for w in words) / max(1, len(words))
+    return joined, avg_conf
 
 
 def parse_name_scores(text: str):
     normalized = text.replace("O", "0").replace("I", "1")
     results = []
     for name, score in NAME_SCORE_RE.findall(normalized):
-        value = parse_int(score)
+        value = int(score)
         if 0 <= value <= 99999:
             results.append({"name": name, "score": value})
     return results
@@ -256,10 +100,12 @@ def parse_name_scores(text: str):
 def best_member_match(raw_name: str, members: list[dict]):
     best = None
     best_ratio = 0.0
+    candidates = []
     for member in members:
         aliases = [member["nickname"]] + [a.strip() for a in member.get("nickname_aliases", "").split(",") if a.strip()]
         for alias in aliases:
             ratio = SequenceMatcher(None, normalize_nickname(raw_name), normalize_nickname(alias)).ratio()
+            candidates.append((ratio, member["id"], member["nickname"]))
             if ratio > best_ratio:
                 best_ratio = ratio
                 best = member

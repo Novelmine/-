@@ -12,7 +12,6 @@ from ocr_utils import (
     parse_name_scores,
     preprocess_image,
     run_ocr,
-    extract_maple_table_rows,
 )
 
 UPLOAD_DIR = Path("uploads")
@@ -122,33 +121,26 @@ def upload():
             image_id = img_cursor.lastrowid
 
             try:
-                parsed_rows = extract_maple_table_rows(str(target), row_count=18, engine="auto")
-                if not parsed_rows:
-                    pre = preprocess_image(str(target))
-                    raw_text, avg_conf = run_ocr(pre)
-                    parsed_rows = [{"nickname": p["name"], "score": p["score"], "confidence": avg_conf} for p in parse_name_scores(raw_text)]
+                pre = preprocess_image(str(target))
+                raw_text, avg_conf = run_ocr(pre)
+                parsed = parse_name_scores(raw_text)
             except Exception as exc:
                 flash(f"OCR 처리 실패: {file.filename} ({exc})", "error")
-                parsed_rows = []
+                parsed = []
+                avg_conf = 0.0
 
-            for item in parsed_rows:
-                raw_name = item.get("nickname", "")
-                raw_score = int(item.get("score", 0) or 0)
-                conf = float(item.get("confidence", 0.0) or 0.0)
-                if not raw_name or raw_score <= 0:
-                    continue
-
-                member, similarity = best_member_match(raw_name, members)
+            for item in parsed:
+                member, similarity = best_member_match(item["name"], members)
                 member_id = member["id"] if member else None
                 conn.execute(
                     "INSERT INTO ocr_lines (image_id, raw_name, raw_score, confidence) VALUES (?, ?, ?, ?)",
-                    (image_id, raw_name, raw_score, conf),
+                    (image_id, item["name"], item["score"], avg_conf),
                 )
                 if member_id:
                     extracted_records.append(
                         {
                             "member_id": member_id,
-                            "score": raw_score,
+                            "score": item["score"],
                             "source_image_id": image_id,
                             "similarity": similarity,
                         }

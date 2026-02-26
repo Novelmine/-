@@ -1,6 +1,6 @@
 import unittest
 
-from ocr_utils import merge_consensus, normalize_nickname, parse_int, parse_name_scores
+from ocr_utils import merge_consensus, normalize_nickname, parse_name_scores
 
 
 class OCRUtilsTest(unittest.TestCase):
@@ -14,10 +14,6 @@ class OCRUtilsTest(unittest.TestCase):
     def test_normalize_nickname(self):
         self.assertEqual(normalize_nickname("R0saura"), "rosaura")
         self.assertEqual(normalize_nickname("K.cc윈드"), "kcc윈드")
-
-    def test_parse_int(self):
-        self.assertEqual(parse_int("71,457"), 71457)
-        self.assertEqual(parse_int("O0O"), 0)
 
     def test_merge_consensus_median(self):
         merged = merge_consensus(
