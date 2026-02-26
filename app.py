@@ -70,7 +70,11 @@ def _process_batch_async(batch_id: int, week_key: str, jobs: list[dict]):
 
 @app.route("/")
 def index():
-    batches = store.list_recent_batches(limit=20)
+    try:
+        batches = store.list_recent_batches(limit=20)
+    except StorageError as exc:
+        flash(str(exc), "error")
+        batches = []
     return render_template("index.html", batches=batches)
 
 

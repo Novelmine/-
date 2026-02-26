@@ -70,6 +70,8 @@ python -m unittest -v
 - 또는 기존 서비스를 삭제하고 `Blueprint(render.yaml)` 방식으로 다시 생성해도 됩니다.
 
 
+- 업데이트 후 첫 실행에서는 `weekly_batches.processed_count` 컬럼이 없어도 자동 호환(fallback)되며, 진행률은 0부터 표시됩니다.
+
 ## Render 부팅 에러(IPv6 Network is unreachable) 대응
 - REST 모드(`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`)를 쓰면 이 이슈를 대부분 회피할 수 있습니다.
 - Supabase 연결은 가능하면 **Connection Pooler(포트 6543)** 문자열을 사용하세요.

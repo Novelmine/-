@@ -18,12 +18,23 @@ class Storage:
 
     def list_recent_batches(self, limit=20):
         if self.use_rest:
-            return self._rest_select(
-                "weekly_batches",
-                select="id,week_key,uploaded_count,processed_count,status,created_at",
-                order="id.desc",
-                limit=limit,
-            )
+            try:
+                rows = self._rest_select(
+                    "weekly_batches",
+                    select="id,week_key,uploaded_count,processed_count,status,created_at",
+                    order="id.desc",
+                    limit=limit,
+                )
+            except StorageError:
+                rows = self._rest_select(
+                    "weekly_batches",
+                    select="id,week_key,uploaded_count,status,created_at",
+                    order="id.desc",
+                    limit=limit,
+                )
+            for r in rows:
+                r.setdefault("processed_count", 0)
+            return rows
         with get_conn() as conn:
             return conn.execute(
                 "SELECT id, week_key, uploaded_count, processed_count, status, created_at FROM weekly_batches ORDER BY id DESC LIMIT %s",
@@ -107,10 +118,16 @@ class Storage:
 
     def create_batch(self, week_key, uploaded_count):
         if self.use_rest:
-            rows = self._rest_insert(
-                "weekly_batches",
-                [{"week_key": week_key, "uploaded_count": uploaded_count, "processed_count": 0, "status": "processing"}],
-            )
+            try:
+                rows = self._rest_insert(
+                    "weekly_batches",
+                    [{"week_key": week_key, "uploaded_count": uploaded_count, "processed_count": 0, "status": "processing"}],
+                )
+            except StorageError:
+                rows = self._rest_insert(
+                    "weekly_batches",
+                    [{"week_key": week_key, "uploaded_count": uploaded_count, "status": "processing"}],
+                )
             return rows[0]["id"]
         with get_conn() as conn:
             cur = conn.execute(
@@ -157,7 +174,10 @@ class Storage:
 
     def update_batch_progress(self, batch_id, processed_count, status="processing"):
         if self.use_rest:
-            self._rest_patch("weekly_batches", {"processed_count": int(processed_count), "status": status}, {"id": f"eq.{batch_id}"})
+            try:
+                self._rest_patch("weekly_batches", {"processed_count": int(processed_count), "status": status}, {"id": f"eq.{batch_id}"})
+            except StorageError:
+                self._rest_patch("weekly_batches", {"status": status}, {"id": f"eq.{batch_id}"})
             return
         with get_conn() as conn:
             conn.execute(
@@ -170,7 +190,10 @@ class Storage:
         if self.use_rest:
             batch = self.get_batch(batch_id)
             uploaded = batch.get("uploaded_count", 0) if batch else 0
-            self._rest_patch("weekly_batches", {"status": "done", "processed_count": uploaded}, {"id": f"eq.{batch_id}"})
+            try:
+                self._rest_patch("weekly_batches", {"status": "done", "processed_count": uploaded}, {"id": f"eq.{batch_id}"})
+            except StorageError:
+                self._rest_patch("weekly_batches", {"status": "done"}, {"id": f"eq.{batch_id}"})
             return
         with get_conn() as conn:
             row = conn.execute("SELECT uploaded_count FROM weekly_batches WHERE id=%s", (batch_id,)).fetchone()
@@ -180,7 +203,10 @@ class Storage:
 
     def mark_batch_failed(self, batch_id, processed_count):
         if self.use_rest:
-            self._rest_patch("weekly_batches", {"status": "failed", "processed_count": int(processed_count)}, {"id": f"eq.{batch_id}"})
+            try:
+                self._rest_patch("weekly_batches", {"status": "failed", "processed_count": int(processed_count)}, {"id": f"eq.{batch_id}"})
+            except StorageError:
+                self._rest_patch("weekly_batches", {"status": "failed"}, {"id": f"eq.{batch_id}"})
             return
         with get_conn() as conn:
             conn.execute("UPDATE weekly_batches SET status='failed', processed_count=%s WHERE id=%s", (int(processed_count), batch_id))
@@ -189,7 +215,10 @@ class Storage:
     def get_batch(self, batch_id):
         if self.use_rest:
             rows = self._rest_select("weekly_batches", select="*", filters={"id": f"eq.{batch_id}"}, limit=1)
-            return rows[0] if rows else None
+            if not rows:
+                return None
+            rows[0].setdefault("processed_count", 0)
+            return rows[0]
         with get_conn() as conn:
             return conn.execute("SELECT * FROM weekly_batches WHERE id=%s", (batch_id,)).fetchone()
 
