@@ -60,7 +60,7 @@ def _get_json(path: str, api_key: str, params: Optional[dict] = None) -> dict:
 
 def fetch_guild_id(api_key: str, world_name: str, guild_name: str) -> str:
     data = _get_json(
-        "/guild/id/",
+        "/guild/id",
         api_key,
         {"world_name": world_name, "guild_name": guild_name},
     )
@@ -84,7 +84,7 @@ def fetch_guild_members(
     if date:
         params["date"] = date
 
-    data = _get_json("/guild/basic/", api_key, params)
+    data = _get_json("/guild/basic", api_key, params)
     members = data.get("guild_member") or data.get("guild_member_name") or []
     if not isinstance(members, list):
         raise GuildAPIError(
