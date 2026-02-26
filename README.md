@@ -46,6 +46,7 @@ python -m unittest -v
 - Nexon Open API Key가 필요하며, 요청 헤더 `x-nxopen-api-key`로 호출합니다.
 - API 직접 확인 시 308 Redirect가 나오면 URL 끝 슬래시(`/`)가 필요한 경우입니다. `curl -L`을 사용하거나 `/guild/id/`, `/guild/basic/` 경로를 사용하세요.
 - 길드원 동기화에서 404가 뜨면 보통 `서버명/길드명/date` 파라미터 문제입니다. 최신 버전은 에러 메시지에 호출 경로/파라미터/응답 body 일부를 함께 표시합니다.
+- Nexon API 도메인이 환경마다 다를 수 있어, 기본값으로 `open.api.nexon.com`/`openapi.nexon.com`을 순차 시도합니다. 필요 시 `NEXON_OPENAPI_BASE_URL` 환경변수로 고정할 수 있습니다.
 
 
 ## DB 설정 / Supabase 연결
