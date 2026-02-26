@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <h2>OCR 처리 진행중 (배치 #{{ batch.id }})</h2>
+  <p>주차키: <strong>{{ batch.week_key }}</strong></p>
+  <div class="progress-wrap">
+    <div class="progress-bar" id="progressBar" style="width:0%"></div>
+  </div>
+  <p id="progressText">0%</p>
+  <p id="statusText">처리 시작 대기중...</p>
+</section>
+
+<script>
+const batchId = {{ batch.id }};
+async function poll() {
+  const res = await fetch(`/batch/${batchId}/status`);
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById('statusText').textContent = `오류: ${data.error || 'unknown'}`;
+    return;
+  }
+
+  const pct = Math.max(0, Math.min(100, data.progress || 0));
+  document.getElementById('progressBar').style.width = `${pct}%`;
+  document.getElementById('progressText').textContent = `${pct}% (${data.processed_count}/${data.uploaded_count})`;
+  document.getElementById('statusText').textContent = `상태: ${data.status}`;
+
+  if (data.done) {
+    window.location.href = data.result_url;
+    return;
+  }
+  if (data.failed) {
+    document.getElementById('statusText').textContent = '처리 실패 - 다시 시도해주세요.';
+    return;
+  }
+  setTimeout(poll, 1200);
+}
+poll();
+</script>
+{% endblock %}

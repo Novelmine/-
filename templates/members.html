@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <h2>길드원 등록</h2>
+  <form method="post" class="grid-form">
+    <label>닉네임 <input name="nickname" required></label>
+    <label>직위 <input name="rank" placeholder="길드원"></label>
+    <label>별칭/오타 (쉼표구분) <input name="nickname_aliases" placeholder="김길드,KimGuild"></label>
+    <button type="submit">추가</button>
+  </form>
+</section>
+
+
+<section class="card">
+  <h2>넥슨 API로 길드원 동기화</h2>
+  <form method="post" action="{{ url_for('import_guild_members') }}" class="grid-form">
+    <label>API Key <input name="api_key" required></label>
+    <label>서버명 (예: 엘리시움) <input name="world_name" value="엘리시움" required></label>
+    <label>길드명 (예: 설아) <input name="guild_name" value="설아" required></label>
+    <label>기준일 (선택, YYYY-MM-DD) <input name="date"></label>
+    <button type="submit">길드원 목록 가져오기</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>길드원 목록</h2>
+  <table>
+    <thead><tr><th>닉네임</th><th>직위</th><th>별칭</th></tr></thead>
+    <tbody>
+      {% for m in members %}
+      <tr>
+        <td>{{ m.nickname }}</td>
+        <td>{{ m.rank }}</td>
+        <td>{{ m.nickname_aliases }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3">등록된 길드원이 없습니다.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
