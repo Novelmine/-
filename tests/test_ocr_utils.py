@@ -5,11 +5,16 @@ from ocr_utils import merge_consensus, normalize_nickname, parse_name_scores
 
 class OCRUtilsTest(unittest.TestCase):
     def test_parse_name_scores(self):
-        text = "홍길동 1234 Kim1 7777 noise"
+        text = "홍길동 1234\nKim1 7777\nnoise"
         rows = parse_name_scores(text)
         self.assertEqual(rows[0]["name"], "홍길동")
         self.assertEqual(rows[0]["score"], 1234)
         self.assertEqual(rows[1]["name"], "Kim1")
+
+    def test_parse_name_scores_ocr_noise(self):
+        text = "설아: 1O,2S0\n로즈 | 8B0\n잘못된줄 abc"
+        rows = parse_name_scores(text)
+        self.assertEqual(rows, [{"name": "설아", "score": 10250}, {"name": "로즈", "score": 880}])
 
     def test_normalize_nickname(self):
         self.assertEqual(normalize_nickname("R0saura"), "rosaura")
