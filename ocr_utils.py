@@ -17,7 +17,7 @@ except ModuleNotFoundError:
 
 NAME_RE = re.compile(r"[가-힣A-Za-z0-9._-]{2,12}")
 SCORE_TOKEN_RE = re.compile(r"[0-9OIl|S$BZDQ,.'`]{1,8}")
-NAME_SCORE_RE = re.compile(r"([가-힣A-Za-z0-9._-]{2,12})\s*[:|/\\-]?\s*([0-9OIl|S$BZDQ,.'`]{1,8})")
+NAME_SCORE_RE = re.compile(r"\b([가-힣A-Za-z0-9._-]{2,12})\b\s*[:|/\\-]\s*([0-9OIl|S$BZDQ,.'`]{1,12})")
 
 CONFUSION_MAP = str.maketrans({
     "0": "o",
@@ -45,6 +45,8 @@ SCORE_FIX_MAP = str.maketrans({
     ".": "",
     ",": "",
 })
+
+MAX_SCORE = 9_999_999
 
 
 def normalize_nickname(name: str) -> str:
@@ -143,7 +145,7 @@ def _score_to_int(raw: str):
     if not digits:
         return None
     value = int(digits)
-    if 0 <= value <= 99999:
+    if 0 <= value <= MAX_SCORE:
         return value
     return None
 
@@ -156,6 +158,22 @@ def parse_name_scores(text: str):
         line = re.sub(r"\s+", " ", raw_line).strip()
         if not line:
             continue
+
+        tokens = [token for token in line.split(" ") if token]
+        if len(tokens) >= 2 and NAME_RE.fullmatch(tokens[0]):
+            score_candidates = []
+            for token in tokens[1:]:
+                for piece in SCORE_TOKEN_RE.findall(token):
+                    score = _score_to_int(piece)
+                    if score is not None:
+                        score_candidates.append(score)
+
+            if score_candidates:
+                key = (tokens[0], max(score_candidates))
+                if key not in seen:
+                    seen.add(key)
+                    results.append({"name": key[0], "score": key[1]})
+                continue
 
         matched = False
         for name, score_token in NAME_SCORE_RE.findall(line):
@@ -171,27 +189,18 @@ def parse_name_scores(text: str):
         if matched:
             continue
 
-        tokens = line.split(" ")
-        if len(tokens) < 2:
-            continue
-
-        score = _score_to_int(tokens[-1])
-        if score is None:
-            continue
-
-        name = "".join(tokens[:-1])
-        if not NAME_RE.fullmatch(name):
-            continue
-
-        key = (name, score)
-        if key not in seen:
-            seen.add(key)
-            results.append({"name": name, "score": score})
-
     return results
 
 
 def best_member_match(raw_name: str, members: list[dict]):
+    indexed_member = None
+    if raw_name:
+        lookup = normalize_nickname(raw_name)
+        if lookup:
+            indexed_member = build_member_name_index(members).get(lookup)
+    if indexed_member:
+        return indexed_member, 1.0
+
     best = None
     best_ratio = 0.0
     for member in members:
@@ -204,6 +213,50 @@ def best_member_match(raw_name: str, members: list[dict]):
     if not best or best_ratio < 0.65:
         return None, best_ratio
     return best, best_ratio
+
+
+def build_member_name_index(members: list[dict]):
+    index = {}
+    for member in members:
+        aliases = [member["nickname"]] + [a.strip() for a in member.get("nickname_aliases", "").split(",") if a.strip()]
+        for alias in aliases:
+            normalized = normalize_nickname(alias)
+            if normalized and normalized not in index:
+                index[normalized] = member
+    return index
+
+
+def match_parsed_rows(parsed_rows: list[dict], members: list[dict]):
+    """Match parsed OCR rows to known members and return detailed diagnostics."""
+    if not parsed_rows:
+        return []
+
+    index = build_member_name_index(members)
+    matched = []
+    for item in parsed_rows:
+        raw_name = item.get("name", "")
+        normalized = normalize_nickname(raw_name)
+
+        strategy = "fuzzy"
+        member = index.get(normalized)
+        similarity = 1.0 if member else 0.0
+        if member is None:
+            member, similarity = best_member_match(raw_name, members)
+        else:
+            strategy = "dictionary"
+
+        matched.append(
+            {
+                "raw_name": raw_name,
+                "score": item["score"],
+                "member": member,
+                "member_id": member["id"] if member else None,
+                "corrected_name": member["nickname"] if member else raw_name,
+                "similarity": similarity,
+                "strategy": strategy if member else "unmatched",
+            }
+        )
+    return matched
 
 
 def merge_consensus(records: list[dict]):
