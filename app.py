@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from pathlib import Path
 from threading import Thread
 
@@ -9,9 +10,9 @@ from guild_api import GuildAPIError, fetch_guild_members
 from storage import Storage, StorageError
 from utils_dates import compute_previous_week_thursday_key
 from ocr_utils import (
-    best_member_match,
     compute_file_hash,
     merge_consensus,
+    match_parsed_rows,
     parse_name_scores,
     preprocess_image,
     run_ocr,
@@ -23,6 +24,15 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = Flask(__name__)
 app.secret_key = "maple-dev-secret"
 store = Storage()
+
+
+def _append_ocr_log(batch_id: int, image_id: int, payload: dict):
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    log_path = log_dir / f"ocr_batch_{batch_id}.log"
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] image_id={image_id} {payload}\n")
 
 
 def _process_batch_async(batch_id: int, week_key: str, jobs: list[dict]):
@@ -40,19 +50,42 @@ def _process_batch_async(batch_id: int, week_key: str, jobs: list[dict]):
                 parsed = parse_name_scores(raw_text)
             except Exception:
                 parsed = []
+                raw_text = ""
                 avg_conf = 0.0
 
-            for item in parsed:
-                member, similarity = best_member_match(item["name"], members)
-                member_id = member["id"] if member else None
-                store.add_ocr_line(image_id, item["name"], item["score"], avg_conf)
+            matched_rows = match_parsed_rows(parsed, members)
+            _append_ocr_log(
+                batch_id,
+                image_id,
+                {
+                    "ocr_conf": round(avg_conf, 2),
+                    "raw_text_preview": raw_text[:400].replace("\n", " | "),
+                    "parsed_count": len(parsed),
+                    "matched_count": len([r for r in matched_rows if r["member_id"]]),
+                    "rows": [
+                        {
+                            "raw_name": r["raw_name"],
+                            "corrected_name": r["corrected_name"],
+                            "score": r["score"],
+                            "member_id": r["member_id"],
+                            "similarity": round(r["similarity"], 3),
+                            "strategy": r["strategy"],
+                        }
+                        for r in matched_rows
+                    ],
+                },
+            )
+
+            for row in matched_rows:
+                member_id = row["member_id"]
+                store.add_ocr_line(image_id, row["raw_name"], row["score"], avg_conf)
                 if member_id:
                     extracted_records.append(
                         {
                             "member_id": member_id,
-                            "score": item["score"],
+                            "score": row["score"],
                             "source_image_id": image_id,
-                            "similarity": similarity,
+                            "similarity": row["similarity"],
                         }
                     )
 
