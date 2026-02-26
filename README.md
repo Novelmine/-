@@ -45,6 +45,7 @@ python -m unittest -v
 - 동기화 시 길드에서 빠진 유저는 삭제하지 않고 `is_active = false`로 비활성 처리(기록 보존), 신규 유저는 자동 추가됩니다.
 - Nexon Open API Key가 필요하며, 요청 헤더 `x-nxopen-api-key`로 호출합니다.
 - API 직접 확인 시 308 Redirect가 나오면 URL 끝 슬래시(`/`)가 필요한 경우입니다. `curl -L`을 사용하거나 `/guild/id/`, `/guild/basic/` 경로를 사용하세요.
+- 길드원 동기화에서 404가 뜨면 보통 `서버명/길드명/date` 파라미터 문제입니다. 최신 버전은 에러 메시지에 호출 경로/파라미터/응답 body 일부를 함께 표시합니다.
 
 
 ## DB 설정 / Supabase 연결
