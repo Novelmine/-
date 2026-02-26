@@ -1,7 +1,8 @@
 import os
 from pathlib import Path
+from threading import Thread
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
 
 from db import init_db
 from guild_api import GuildAPIError, fetch_guild_members
@@ -22,6 +23,49 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = Flask(__name__)
 app.secret_key = "maple-dev-secret"
 store = Storage()
+
+
+def _process_batch_async(batch_id: int, week_key: str, jobs: list[dict]):
+    processed_count = 0
+    try:
+        members = [dict(r) if not isinstance(r, dict) else r for r in store.list_active_members()]
+        extracted_records = []
+
+        for job in jobs:
+            image_id = job["image_id"]
+            path = job["path"]
+            try:
+                pre = preprocess_image(path)
+                raw_text, avg_conf = run_ocr(pre)
+                parsed = parse_name_scores(raw_text)
+            except Exception:
+                parsed = []
+                avg_conf = 0.0
+
+            for item in parsed:
+                member, similarity = best_member_match(item["name"], members)
+                member_id = member["id"] if member else None
+                store.add_ocr_line(image_id, item["name"], item["score"], avg_conf)
+                if member_id:
+                    extracted_records.append(
+                        {
+                            "member_id": member_id,
+                            "score": item["score"],
+                            "source_image_id": image_id,
+                            "similarity": similarity,
+                        }
+                    )
+
+            processed_count += 1
+            store.update_batch_progress(batch_id, processed_count, status="processing")
+
+        merged = merge_consensus(extracted_records)
+        for row in merged:
+            store.add_weekly_record(week_key, row["member_id"], row["score"], row["source_image_id"], row["confirmed"])
+
+        store.mark_batch_done(batch_id)
+    except StorageError:
+        store.mark_batch_failed(batch_id, processed_count)
 
 
 @app.route("/")
@@ -48,8 +92,6 @@ def members():
     return render_template("members.html", members=rows)
 
 
-
-
 @app.route("/members/import-guild", methods=["POST"])
 def import_guild_members():
     api_key = request.form.get("api_key", "").strip()
@@ -63,13 +105,8 @@ def import_guild_members():
 
     try:
         member_names = fetch_guild_members(api_key, world_name, guild_name, date)
-    except GuildAPIError as exc:
-        flash(str(exc), "error")
-        return redirect(url_for("members"))
-
-    try:
         inserted = store.import_members(member_names)
-    except StorageError as exc:
+    except (GuildAPIError, StorageError) as exc:
         flash(str(exc), "error")
         return redirect(url_for("members"))
 
@@ -84,60 +121,67 @@ def upload():
 
     input_date = request.form.get("input_date", "").strip() or None
     week_key = compute_previous_week_thursday_key(input_date)
-    files = request.files.getlist("images")
+    files = [f for f in request.files.getlist("images") if f and f.filename]
 
-    files = [f for f in files if f and f.filename]
     if not files:
         flash("이미지를 최소 1장 이상 업로드하세요.", "error")
         return redirect(url_for("upload"))
 
     try:
-        members = [dict(r) if not isinstance(r, dict) else r for r in store.list_active_members()]
         batch_id = store.create_batch(week_key, len(files))
-
-        extracted_records = []
-
+        jobs = []
         for file in files:
             target = UPLOAD_DIR / f"{batch_id}_{file.filename}"
             file.save(target)
-
             image_hash = compute_file_hash(str(target))
             image_id = store.create_image(batch_id, str(target), image_hash)
+            jobs.append({"image_id": image_id, "path": str(target)})
 
-            try:
-                pre = preprocess_image(str(target))
-                raw_text, avg_conf = run_ocr(pre)
-                parsed = parse_name_scores(raw_text)
-            except Exception as exc:
-                flash(f"OCR 처리 실패: {file.filename} ({exc})", "error")
-                parsed = []
-                avg_conf = 0.0
-
-            for item in parsed:
-                member, similarity = best_member_match(item["name"], members)
-                member_id = member["id"] if member else None
-                store.add_ocr_line(image_id, item["name"], item["score"], avg_conf)
-                if member_id:
-                    extracted_records.append(
-                        {
-                            "member_id": member_id,
-                            "score": item["score"],
-                            "source_image_id": image_id,
-                            "similarity": similarity,
-                        }
-                    )
-
-        merged = merge_consensus(extracted_records)
-        for row in merged:
-            store.add_weekly_record(week_key, row["member_id"], row["score"], row["source_image_id"], row["confirmed"])
-
-        store.mark_batch_done(batch_id)
+        Thread(target=_process_batch_async, args=(batch_id, week_key, jobs), daemon=True).start()
     except StorageError as exc:
         flash(str(exc), "error")
         return redirect(url_for("upload"))
 
-    flash(f"배치 처리 완료: {len(files)}장 업로드 (주차키: {week_key})", "success")
-    return redirect(url_for("batch_result", batch_id=batch_id))
+    return redirect(url_for("batch_progress", batch_id=batch_id))
+
+
+@app.route("/batch/<int:batch_id>/progress")
+def batch_progress(batch_id: int):
+    batch = store.get_batch(batch_id)
+    if not batch:
+        flash("배치를 찾을 수 없습니다.", "error")
+        return redirect(url_for("index"))
+    return render_template("batch_progress.html", batch=batch)
+
+
+@app.route("/batch/<int:batch_id>/status")
+def batch_status(batch_id: int):
+    try:
+        batch = store.get_batch(batch_id)
+    except StorageError as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    if not batch:
+        return jsonify({"error": "not found"}), 404
+
+    uploaded = int(batch.get("uploaded_count", 0) or 0)
+    processed = int(batch.get("processed_count", 0) or 0)
+    status = batch.get("status", "processing")
+    done = status == "done"
+    failed = status == "failed"
+
+    return jsonify(
+        {
+            "batch_id": batch_id,
+            "status": status,
+            "uploaded_count": uploaded,
+            "processed_count": processed,
+            "progress": 100 if uploaded == 0 else int((processed / uploaded) * 100),
+            "done": done,
+            "failed": failed,
+            "result_url": url_for("batch_result", batch_id=batch_id),
+        }
+    )
 
 
 @app.route("/batch/<int:batch_id>")

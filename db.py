@@ -72,6 +72,7 @@ def init_db():
                     id BIGSERIAL PRIMARY KEY,
                     week_key TEXT NOT NULL,
                     uploaded_count INTEGER NOT NULL DEFAULT 0,
+                    processed_count INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL DEFAULT 'processing',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
@@ -103,4 +104,5 @@ def init_db():
                 );
                 """
             )
+            cur.execute("ALTER TABLE weekly_batches ADD COLUMN IF NOT EXISTS processed_count INTEGER NOT NULL DEFAULT 0;")
         conn.commit()

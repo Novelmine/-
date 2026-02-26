@@ -16,18 +16,17 @@ class Storage:
         self.supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
         self.use_rest = bool(self.supabase_url and self.supabase_key)
 
-    # ---------- Public API ----------
     def list_recent_batches(self, limit=20):
         if self.use_rest:
             return self._rest_select(
                 "weekly_batches",
-                select="id,week_key,uploaded_count,status,created_at",
+                select="id,week_key,uploaded_count,processed_count,status,created_at",
                 order="id.desc",
                 limit=limit,
             )
         with get_conn() as conn:
             return conn.execute(
-                "SELECT id, week_key, uploaded_count, status, created_at FROM weekly_batches ORDER BY id DESC LIMIT %s",
+                "SELECT id, week_key, uploaded_count, processed_count, status, created_at FROM weekly_batches ORDER BY id DESC LIMIT %s",
                 (limit,),
             ).fetchall()
 
@@ -61,18 +60,15 @@ class Storage:
             existing_names = {m["nickname"] for m in existing}
             inserted_count = len([n for n in incoming if n not in existing_names])
 
-            # Upsert incoming members and keep them active.
             rows = [{"nickname": n, "rank": "길드원", "nickname_aliases": "", "is_active": True} for n in incoming]
             if rows:
                 self._rest_insert(
                     "members",
                     rows,
                     on_conflict="nickname",
-                    ignore_duplicates=False,
                     merge_duplicates=True,
                 )
 
-            # Members missing from latest guild API list are kept but deactivated.
             to_deactivate = [m["id"] for m in existing if m["nickname"] not in set(incoming)]
             for member_id in to_deactivate:
                 self._rest_patch("members", {"is_active": False}, {"id": f"eq.{member_id}"})
@@ -85,7 +81,7 @@ class Storage:
             existing_names = {r["nickname"] for r in existing}
 
             for name in incoming:
-                cur = conn.execute(
+                conn.execute(
                     """
                     INSERT INTO members (nickname, rank, nickname_aliases, is_active)
                     VALUES (%s, '길드원', '', TRUE)
@@ -97,13 +93,9 @@ class Storage:
                     inserted += 1
 
             if incoming:
-                conn.execute(
-                    "UPDATE members SET is_active = FALSE WHERE nickname <> ALL(%s)",
-                    (incoming,),
-                )
+                conn.execute("UPDATE members SET is_active = FALSE WHERE nickname <> ALL(%s)", (incoming,))
             else:
                 conn.execute("UPDATE members SET is_active = FALSE")
-
             conn.commit()
         return inserted
 
@@ -117,22 +109,19 @@ class Storage:
         if self.use_rest:
             rows = self._rest_insert(
                 "weekly_batches",
-                [{"week_key": week_key, "uploaded_count": uploaded_count, "status": "processing"}],
+                [{"week_key": week_key, "uploaded_count": uploaded_count, "processed_count": 0, "status": "processing"}],
             )
             return rows[0]["id"]
         with get_conn() as conn:
             cur = conn.execute(
-                "INSERT INTO weekly_batches (week_key, uploaded_count, status) VALUES (%s, %s, 'processing') RETURNING id",
+                "INSERT INTO weekly_batches (week_key, uploaded_count, processed_count, status) VALUES (%s, %s, 0, 'processing') RETURNING id",
                 (week_key, uploaded_count),
             )
             return cur.fetchone()["id"]
 
     def create_image(self, batch_id, file_path, image_hash):
         if self.use_rest:
-            rows = self._rest_insert(
-                "images",
-                [{"batch_id": batch_id, "file_path": file_path, "image_hash": image_hash}],
-            )
+            rows = self._rest_insert("images", [{"batch_id": batch_id, "file_path": file_path, "image_hash": image_hash}])
             return rows[0]["id"]
         with get_conn() as conn:
             cur = conn.execute(
@@ -143,15 +132,7 @@ class Storage:
 
     def add_ocr_line(self, image_id, raw_name, raw_score, confidence):
         if self.use_rest:
-            self._rest_insert(
-                "ocr_lines",
-                [{
-                    "image_id": image_id,
-                    "raw_name": raw_name,
-                    "raw_score": raw_score,
-                    "confidence": confidence,
-                }],
-            )
+            self._rest_insert("ocr_lines", [{"image_id": image_id, "raw_name": raw_name, "raw_score": raw_score, "confidence": confidence}])
             return
         with get_conn() as conn:
             conn.execute(
@@ -164,13 +145,7 @@ class Storage:
         if self.use_rest:
             self._rest_insert(
                 "weekly_records",
-                [{
-                    "week_key": week_key,
-                    "member_id": member_id,
-                    "score": score,
-                    "source_image_id": source_image_id,
-                    "confirmed": bool(confirmed),
-                }],
+                [{"week_key": week_key, "member_id": member_id, "score": score, "source_image_id": source_image_id, "confirmed": bool(confirmed)}],
             )
             return
         with get_conn() as conn:
@@ -180,12 +155,35 @@ class Storage:
             )
             conn.commit()
 
-    def mark_batch_done(self, batch_id):
+    def update_batch_progress(self, batch_id, processed_count, status="processing"):
         if self.use_rest:
-            self._rest_patch("weekly_batches", {"status": "done"}, {"id": f"eq.{batch_id}"})
+            self._rest_patch("weekly_batches", {"processed_count": int(processed_count), "status": status}, {"id": f"eq.{batch_id}"})
             return
         with get_conn() as conn:
-            conn.execute("UPDATE weekly_batches SET status='done' WHERE id=%s", (batch_id,))
+            conn.execute(
+                "UPDATE weekly_batches SET processed_count=%s, status=%s WHERE id=%s",
+                (int(processed_count), status, batch_id),
+            )
+            conn.commit()
+
+    def mark_batch_done(self, batch_id):
+        if self.use_rest:
+            batch = self.get_batch(batch_id)
+            uploaded = batch.get("uploaded_count", 0) if batch else 0
+            self._rest_patch("weekly_batches", {"status": "done", "processed_count": uploaded}, {"id": f"eq.{batch_id}"})
+            return
+        with get_conn() as conn:
+            row = conn.execute("SELECT uploaded_count FROM weekly_batches WHERE id=%s", (batch_id,)).fetchone()
+            uploaded = row["uploaded_count"] if row else 0
+            conn.execute("UPDATE weekly_batches SET status='done', processed_count=%s WHERE id=%s", (uploaded, batch_id))
+            conn.commit()
+
+    def mark_batch_failed(self, batch_id, processed_count):
+        if self.use_rest:
+            self._rest_patch("weekly_batches", {"status": "failed", "processed_count": int(processed_count)}, {"id": f"eq.{batch_id}"})
+            return
+        with get_conn() as conn:
+            conn.execute("UPDATE weekly_batches SET status='failed', processed_count=%s WHERE id=%s", (int(processed_count), batch_id))
             conn.commit()
 
     def get_batch(self, batch_id):
@@ -220,7 +218,7 @@ class Storage:
                     "week_key": r["week_key"],
                     "score": r["score"],
                     "confirmed": r.get("confirmed", False),
-                    "nickname": member_map.get(r["member_id"], f"member#{r['member_id']}")
+                    "nickname": member_map.get(r["member_id"], f"member#{r['member_id']}"),
                 }
                 for r in records
             ]
@@ -237,7 +235,6 @@ class Storage:
                 (week_key,),
             ).fetchall()
 
-    # ---------- REST helpers ----------
     def _rest_headers(self, extra=None):
         headers = {
             "apikey": self.supabase_key,
