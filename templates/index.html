@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <h2>최근 주간 배치</h2>
+  <table>
+    <thead><tr><th>ID</th><th>주차</th><th>이미지수</th><th>상태</th><th>생성일</th><th>결과</th></tr></thead>
+    <tbody>
+      {% for b in batches %}
+      <tr>
+        <td>{{ b.id }}</td>
+        <td>{{ b.week_key }}</td>
+        <td>{{ b.uploaded_count }}</td>
+        <td>{{ b.status }}</td>
+        <td>{{ b.created_at }}</td>
+        <td><a href="{{ url_for('batch_result', batch_id=b.id) }}">보기</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">아직 배치가 없습니다.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
